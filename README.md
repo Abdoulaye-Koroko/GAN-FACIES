@@ -31,24 +31,12 @@ unit tests and a small ready-to-use dataset (see below).
 
 ---
 
-Date: 2022-07-20
+## Note
 
-Author: [github@Valentingol](https://github.com/valentingol)
+This repo is owned by Goldite Valentin [github@Valentingol](https://github.com/valentingol)
 
-[![GitHub User followers](
-    https://img.shields.io/github/followers/valentingol?label=Owner%20followers&style=social)](
-    https://github.com/valentingol)
-[![GitHub User's User stars](
-    https://img.shields.io/github/stars/valentingol?label=Owner%20Stars&style=social)](
-    https://github.com/valentingol)
-
-Work during my 5 months internship at [IFPEN](https://www.ifpenergiesnouvelles.com/),
-supervised by [UVSQ](https://www.uvsq.fr/english)
-and financed by [DATAIA Paris Saclay](https://dataia.eu/en/dataia-paris-saclay-institute).
-
-Copyright © 2022 Goldite Valentin
-
-MIT License ([see here](LICENSE.md))
+At my level, I've made a few modifications to enable training with the KFAC optimizer, which is a powerfull second order optimization method and
+can be much more effecient than baseline optimizers such as adam or SGD.
 
 ---
 
