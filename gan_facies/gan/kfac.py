@@ -58,7 +58,6 @@ class KFAC(Optimizer):
         
         self.update_stats = True
         
-        
         for mod in net.modules():
             
             mod_class = mod.__class__.__name__
@@ -73,7 +72,13 @@ class KFAC(Optimizer):
                 
                 self._bwd_handles.append(handle)
                 
-                params = [mod.weight]
+                try:
+                
+                    params = [mod.weight_orig]
+                    
+                except:
+                    
+                    params = [mod.weight]
                 
                 if mod.bias is not None:
                     
