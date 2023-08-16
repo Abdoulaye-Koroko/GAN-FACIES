@@ -1,5 +1,14 @@
 # Facies modeling with GANs
 
+## Note
+
+This repo is owned by Goldite Valentin [github@Valentingol](https://github.com/valentingol)
+
+At my level, I've made a few modifications to enable training with the KFAC optimizer, which is a powerfull second order optimization method and
+can be much more effecient than baseline optimizers such as adam or SGD.
+
+---
+
 Underground facies (= kind of sediment) modeling with GANs.
 
 **Disclaimer**: This repository is a work in progress. This code aims to be the
@@ -31,14 +40,6 @@ unit tests and a small ready-to-use dataset (see below).
 
 ---
 
-## Note
-
-This repo is owned by Goldite Valentin [github@Valentingol](https://github.com/valentingol)
-
-At my level, I've made a few modifications to enable training with the KFAC optimizer, which is a powerfull second order optimization method and
-can be much more effecient than baseline optimizers such as adam or SGD.
-
----
 
 ## Available models
 
