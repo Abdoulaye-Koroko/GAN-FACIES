@@ -16,7 +16,7 @@ try:
 except ImportError:
     pass
 
-import ignite.distributed as idist
+#import ignite.distributed as idist
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -27,7 +27,7 @@ from torch.optim import Optimizer
 
 import gan_facies.metrics as metr
 import gan_facies.utils.auxiliaries as aux
-from gan_facies.data.data_loader import DistributedDataLoader
+from gan_facies.data.data_loader import DataLoader
 from gan_facies.data.process import to_img_grid
 from gan_facies.metrics.tools import MetricsType
 from gan_facies.utils.configs import ConfigType
@@ -53,7 +53,7 @@ class BaseTrainerGAN(ABC):
 
     Parameters
     ----------
-    data_loader : DistributedDataLoader
+    data_loader : DataLoader
         Object returning a torch.utils.data.DataLoader when called with
         data_loader.loader() and containing an attribute n_classes.
         The DataLoader should return batches of one-hot-encoded torch
@@ -62,11 +62,13 @@ class BaseTrainerGAN(ABC):
         Global configuration.
     """
 
-    def __init__(self, data_loader: DistributedDataLoader,
+    def __init__(self, data_loader: DataLoader,
                  config: ConfigType) -> None:
         # Data loader
         self.data_loader = data_loader
         self.n_classes = data_loader.n_classes
+        
+        self.device = torch.device("cuda:1")
 
         # Config
         self.config = config
@@ -101,14 +103,16 @@ class BaseTrainerGAN(ABC):
             # Truncation trick
             self.fixed_z = torch.fmod(
                 torch.randn(self.batch_size, config.model.z_dim,
-                            device='cuda:0'), config.trunc_ampl)
+                            device=self.device), config.trunc_ampl)
         else:
             self.fixed_z = torch.randn(self.batch_size, config.model.z_dim,
-                                       device='cuda:0')
+                                       device=self.device)
 
         self.indicators_path = ''  # Will be overwritten during training
 
         # Gradient scaler for mixed precision training
+        if config.training.mixed_precision and any([config.training.g_optim=="kfac",config.training.d_optim=="kfac"]):
+            config.training.mixed_precision = False # mixed precison not implemented for KFAC preconditioner
         if config.training.mixed_precision:
             self.gen_grad_scaler = torch.cuda.amp.GradScaler()
             self.disc_grad_scaler = torch.cuda.amp.GradScaler()
@@ -117,7 +121,7 @@ class BaseTrainerGAN(ABC):
             self.disc_grad_scaler = None
 
     @abstractmethod
-    def train_generator(self, gen: Module, g_optimizer: Optimizer,
+    def train_generator(self, gen: Module, g_optimizer: Optimizer, g_precond: Optimizer,
                         disc: Module, real_batch: BatchType,
                         device: torch.device
                         ) -> Tuple[Module, Optimizer, Dict[str, torch.Tensor]]:
@@ -135,6 +139,9 @@ class BaseTrainerGAN(ABC):
             or DistributedDataParallel).
         g_optimizer : Optimizer
             Optimizer for the generator, distributed with torch ignite.
+            
+        g_precond: Optimizer
+            Precondtioner for KFAC optimizer. Set to None when Adam or SGD optimizer is used
         disc : Module
             Discriminator, distributed using torch ignite (DataParallel
             or DistributedDataParallel).
@@ -150,6 +157,8 @@ class BaseTrainerGAN(ABC):
             Updated discriminator.
         g_optimizer : Optimizer
             Updated optimizer for the discriminator.
+        g_precond: Optimizer
+            Updated state of the preconditioner
         losses : Dict[str, Tuple[torch.Tensor]]
             Dictionary containing the name of the losses as keys and
             (value, style, size) as values. Value is the
@@ -160,7 +169,7 @@ class BaseTrainerGAN(ABC):
         """
 
     @abstractmethod
-    def train_discriminator(self, disc: Module, d_optimizer: Optimizer,
+    def train_discriminator(self, disc: Module, d_optimizer: Optimizer, d_precond:Optimizer,
                             gen: Module, real_batch: BatchType,
                             device: torch.device
                             ) -> Tuple[Module, Optimizer,
@@ -180,6 +189,10 @@ class BaseTrainerGAN(ABC):
         d_optimizer : Optimizer
             Optimizer for the discriminator, distributed with
             torch ignite.
+            
+        d_precond: Optimizer
+            KFAC preconditioner. Set to none if one used adam or SGD optimizer
+        
         gen : Module
             Generator, distributed using torch ignite (DataParallel
             or DistributedDataParallel).
@@ -195,6 +208,10 @@ class BaseTrainerGAN(ABC):
             Updated discriminator.
         d_optimizer : Optimizer
             Updated optimizer for the discriminator.
+            
+        d_precond: Optimizer
+            Updated preconditioner
+            
         losses : Dict[str, Tuple[torch.Tensor]]
             Dictionary containing the name of the losses as keys and
             (value, style, size) as values. Value is the
@@ -223,6 +240,11 @@ class BaseTrainerGAN(ABC):
             Optimizer for the generator.
         d_optimizer : Optimizer
             Optimizer for the discriminator.
+        g_precond: Optimizer
+            preconditioner for the generator
+        d_precond: Optimizer
+            preconditioner for the discriminator
+        
         """
 
     @abstractmethod
@@ -267,19 +289,21 @@ class BaseTrainerGAN(ABC):
         self.compute_train_indicators()
 
         # Distribute the training over all available GPUs
-        with idist.Parallel(**self.config.distributed) as parallel:
-            parallel.run(self.local_train)
+        #with idist.Parallel(**self.config.distributed) as parallel:
+        #   parallel.run(self.local_train)
+        self.local_train() 
 
         print('Training finished. Final models saved.')
 
-    def local_train(self, rank: int) -> None:
+    def local_train(self) -> None:
         """Train the model on a single process."""
         config = self.config
-        device = idist.device()
+        #device = idist.device()
+        device = self.device
 
         # Create models and optimizers, eventually load parameters from
         # recovered step and distribute the model on the good device
-        gen, disc, g_optimizer, d_optimizer = self.build_model_opt()
+        gen, disc, g_optimizer, d_optimizer, g_precond, d_precond = self.build_model_opt()
 
         # Data iterator
         data_loader = self.data_loader.loader()
@@ -313,37 +337,37 @@ class BaseTrainerGAN(ABC):
                     'If you are using a torch data loader, you may consider '
                     'set drop_last=True.')
 
-                disc, d_optimizer, disc_losses = self.train_discriminator(
-                    disc, d_optimizer, gen, real_batch, device)
+                disc, d_optimizer, d_precond, disc_losses = self.train_discriminator(
+                    disc, d_optimizer, d_precond, gen, real_batch, device)
 
             # Train Generator
-            gen, g_optimizer, gen_losses = self.train_generator(
-                gen, g_optimizer, disc, real_batch, device)
+            gen, g_optimizer, g_precond, gen_losses = self.train_generator(
+                gen, g_optimizer, g_precond, disc, real_batch, device)
 
             losses = {**disc_losses, **gen_losses}
 
-            if rank == 0:
-                base_gen = (gen if not hasattr(gen, 'module')
-                            else gen.module)
-                base_disc = (disc if not hasattr(disc, 'module')
-                             else disc.module)
+            #if rank == 0:
+            base_gen = (gen if not hasattr(gen, 'module')
+                        else gen.module)
+            base_disc = (disc if not hasattr(disc, 'module')
+                         else disc.module)
 
-                # Print out log info
-                if (step+1) % config.training.log_step == 0:
-                    self.log(losses, base_gen)
+            # Print out log info
+            if (step+1) % config.training.log_step == 0:
+                self.log(losses, base_gen)
 
-                # Sample data
-                if (step+1) % config.training.sample_step == 0:
-                    # NOTE 'attentions' should be [] if not attention provided
-                    images, attentions = self.generate_data(base_gen)
-                    self.save_sample_and_attention(images, attentions)
+            # Sample data
+            if (step+1) % config.training.sample_step == 0:
+                # NOTE 'attentions' should be [] if not attention provided
+                images, attentions = self.generate_data(base_gen)
+                self.save_sample_and_attention(images, attentions)
 
-                if (step+1) % config.training.model_save_step == 0:
-                    self.save_models(base_gen, base_disc, last=False)
+            if (step+1) % config.training.model_save_step == 0:
+                self.save_models(base_gen, base_disc, last=False)
 
-                if (step+1) % config.training.metric_step == 0:
-                    w_dists = self.compute_metrics(base_gen)
-                    self.log_metrics(w_dists)
+            if (step+1) % config.training.metric_step == 0:
+                w_dists = self.compute_metrics(base_gen)
+                self.log_metrics(w_dists)
 
             if (self.total_time >= 0
                     and time.time() - self.start_time >= self.total_time):
@@ -362,10 +386,10 @@ class BaseTrainerGAN(ABC):
                       'number to disable this feature).')
                 break
         # Save the final models
-        if rank == 0:
-            base_gen = gen if not hasattr(gen, 'module') else gen.module
-            base_disc = disc if not hasattr(disc, 'module') else disc.module
-            self.save_models(base_gen, base_disc, last=True)
+        #if rank == 0:
+        base_gen = gen if not hasattr(gen, 'module') else gen.module
+        base_disc = disc if not hasattr(disc, 'module') else disc.module
+        self.save_models(base_gen, base_disc, last=True)
 
     def log(self, losses: Dict[str, torch.Tensor], gen: Module) -> None:
         """Log the training progress."""

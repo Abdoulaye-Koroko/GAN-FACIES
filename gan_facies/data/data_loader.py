@@ -2,7 +2,7 @@
 
 from typing import Callable, Optional, Tuple
 
-import ignite.distributed as idist
+
 import numpy as np
 import torch
 from torch.utils.data import Dataset
@@ -148,8 +148,8 @@ class DatasetCond2D(Dataset):
         return data, pixel_maps
 
 
-class DistributedDataLoader():
-    """Distributed data loading class.
+class DataLoader():
+    """Data loading class.
 
     Parameters
     ----------
@@ -206,9 +206,10 @@ class DistributedDataLoader():
         self.shuffle = data_config.shuffle
 
     def loader(self) -> torch.utils.data.DataLoader:
-        """Return the data loader, automatically distributed."""
+        """Return the data loader."""
         # NOTE: drop_last=True to maintain constant batch size
-        loader = idist.auto_dataloader(dataset=self.dataset,
+        
+        loader = torch.utils.data.DataLoader(dataset=self.dataset,
                                        drop_last=True,
                                        batch_size=self.batch_size,
                                        num_workers=self.num_workers,
@@ -216,4 +217,5 @@ class DistributedDataLoader():
                                        persistent_workers=self.persistent,
                                        pin_memory=self.pin_memory,
                                        prefetch_factor=self.prefetch_factor)
+        
         return loader

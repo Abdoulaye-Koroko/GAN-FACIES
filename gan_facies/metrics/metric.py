@@ -13,7 +13,7 @@ from rich.table import Table
 from scipy.stats import wasserstein_distance as w_dist
 from torch import nn
 
-from gan_facies.data.data_loader import DistributedDataLoader
+from gan_facies.data.data_loader import DataLoader
 from gan_facies.metrics.indicators import compute_indicators
 from gan_facies.metrics.tools import (MetricsType, get_reference_indicators,
                                       save_metrics, split_wass_dists)
@@ -135,7 +135,7 @@ def wasserstein_distances(data1: Union[np.ndarray, IndicatorsList],
     return metrics, (indicators_list_1, indicators_list_2)
 
 
-def compute_save_indicators(data_loader: DistributedDataLoader,
+def compute_save_indicators(data_loader: DataLoader,
                             config: ConfigType) -> str:
     """Compute and save indicators from data loader and configuration.
 
@@ -145,7 +145,7 @@ def compute_save_indicators(data_loader: DistributedDataLoader,
 
     Parameters
     ----------
-    data_loader: DistributedDataLoader
+    data_loader: DataLoader
         Data loader to compute indicators.
     config: ConfigType
         Configuration of the experiment.

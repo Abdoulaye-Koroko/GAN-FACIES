@@ -76,10 +76,16 @@ class UncondSADiscriminator(nn.Module):
                          padding: int) -> nn.Module:
         """Return a self-attention discriminator block."""
         layers = []
+        #layers.append(
+        #  spec.SpectralNorm(
+        #        nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size,
+        #                  stride=stride, padding=padding)))
+        
         layers.append(
-            spec.SpectralNorm(
+            nn.utils.spectral_norm(
                 nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size,
-                          stride=stride, padding=padding)))
+                         stride=stride, padding=padding)))
+        
         layers.append(nn.LeakyReLU(0.1))
         module = nn.Sequential(*layers)
         return module
@@ -173,10 +179,9 @@ class UncondSAGenerator(nn.Module):
         """Return a self-attention generator block."""
         layers = []
         layers.append(
-            spec.SpectralNorm(
                 nn.ConvTranspose2d(in_channels, out_channels,
                                    kernel_size=kernel_size, stride=stride,
-                                   padding=padding)))
+                                   padding=padding))
         layers.append(nn.BatchNorm2d(out_channels))
         layers.append(nn.ReLU())
         return nn.Sequential(*layers)

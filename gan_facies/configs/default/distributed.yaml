@@ -6,6 +6,8 @@ nnodes: 1  # number of machines to use
 nproc_per_node: 1  # number of GPUs per machine
 init_method: null
 
+local_rank:  0
+
 # Used if nnodes > 1 (multi-machine training)):
 node_rank: null
 master_addr: null

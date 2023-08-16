@@ -12,12 +12,13 @@ from torch.autograd import Variable
 from torch.nn import Module
 from torch.optim import Optimizer
 
-from gan_facies.data.data_loader import DistributedDataLoader
+from gan_facies.data.data_loader import DataLoader
 from gan_facies.gan.base_trainer import BaseTrainerGAN, BatchType
 from gan_facies.gan.cond_sagan.modules import CondSAGenerator
 from gan_facies.gan.uncond_sagan.modules import UncondSADiscriminator
 from gan_facies.utils.conditioning import generate_pixel_maps
 from gan_facies.utils.configs import ConfigType
+from gan_facies.gan.kfac import KFAC
 
 
 class CondTrainerSAGAN(BaseTrainerGAN):
@@ -25,7 +26,7 @@ class CondTrainerSAGAN(BaseTrainerGAN):
 
     Parameters
     ----------
-    data_loader : DistributedDataLoader
+    data_loader : DataLoader
         Object returning a torch.utils.data.DataLoader when called with
         data_loader.loader() and containing an attribute n_classes.
         The DataLoader should return batches of one-hot-encoded torch
@@ -34,13 +35,13 @@ class CondTrainerSAGAN(BaseTrainerGAN):
         Global configuration.
     """
 
-    def __init__(self, data_loader: DistributedDataLoader,
+    def __init__(self, data_loader: DataLoader,
                  config: ConfigType) -> None:
         super().__init__(data_loader, config)
         # Create random fixed pixel maps for evaluation
         self.create_pixel_maps()
 
-    def train_generator(self, gen: Module, g_optimizer: Optimizer,
+    def train_generator(self, gen: Module, g_optimizer: Optimizer, g_precond: Optimizer,
                         disc: Module, real_batch: BatchType,
                         device: torch.device
                         ) -> Tuple[Module, Optimizer, Dict[str, torch.Tensor]]:
@@ -89,8 +90,13 @@ class CondTrainerSAGAN(BaseTrainerGAN):
             self.gen_grad_scaler.step(g_optimizer)
             self.gen_grad_scaler.update()
         else:
-            g_loss.backward()
-            g_optimizer.step()
+            if g_precond is None:
+                g_loss.backward()
+                g_optimizer.step()
+            else:
+                g_loss.backward(retain_graph=True)
+                g_precond.step(update_params=True)
+                g_optimizer.step()
 
         losses['g_loss'] = g_loss, 'green', 6
         losses['g_cond_loss'] = cond_loss, '#027300', 6
@@ -104,9 +110,9 @@ class CondTrainerSAGAN(BaseTrainerGAN):
                     new_param_d = new_param.data.clone()
                     new_param.data.copy_(ema_decay*old_param_d
                                          + (1.0-ema_decay) * new_param_d)
-        return gen, g_optimizer, losses
+        return gen, g_optimizer, g_precond, losses
 
-    def train_discriminator(self, disc: Module, d_optimizer: Optimizer,
+    def train_discriminator(self, disc: Module, d_optimizer: Optimizer, d_precond: Optimizer,
                             gen: Module, real_batch: BatchType,
                             device: torch.device
                             ) -> Tuple[Module, Optimizer,
@@ -153,8 +159,14 @@ class CondTrainerSAGAN(BaseTrainerGAN):
             self.disc_grad_scaler.step(d_optimizer)
             self.disc_grad_scaler.update()
         else:
-            d_loss.backward()
-            d_optimizer.step()
+            if d_precond is None:
+                d_loss.backward()
+                d_optimizer.step()
+            else:
+                d_loss.backward(retain_graph=True)
+                d_precond.step(update_params=True)
+                d_optimizer.step()
+                
         losses['d_loss'] = d_loss, '#fa4646', 6
         losses['d_loss_real'] = d_loss_real, '#b84a00', 6
 
@@ -196,8 +208,13 @@ class CondTrainerSAGAN(BaseTrainerGAN):
                 self.disc_grad_scaler.step(d_optimizer)
                 self.disc_grad_scaler.update()
             else:
-                d_loss_gp.backward()
-                d_optimizer.step()
+                if d_precond is None:
+                    d_loss_gp.backward()
+                    d_optimizer.step()
+                else:
+                    d_loss_gp.backward(retain_graph=True)
+                    d_precond.step(update_params=True)
+                    d_optimizer.step()
             losses['d_loss_gp'] = d_loss_gp, '#e06919', 5
 
         if self.disc_ema is not None:
@@ -210,7 +227,7 @@ class CondTrainerSAGAN(BaseTrainerGAN):
                     new_param.data.copy_(ema_decay*old_param_d
                                          + (1.0-ema_decay) * new_param_d)
 
-        return disc, d_optimizer, losses
+        return disc, d_optimizer, d_precond, losses
 
     def build_model_opt(self) -> Tuple[Module, Module, Optimizer, Optimizer]:
         """Build generator, discriminator and the optimizers.
@@ -222,32 +239,69 @@ class CondTrainerSAGAN(BaseTrainerGAN):
         through all the devices.
         """
         config = self.config
+        g_optim = config.training.g_optim
+        d_optim = config.training.d_optim
+        
+        device = self.device
+        
         gen = CondSAGenerator(n_classes=self.n_classes,
-                              model_config=self.config.model)
+                              model_config=self.config.model).to(device)
         gen_n_params = sum(p.numel() for p in gen.parameters())
         print(f'Generator num parameters: {gen_n_params / 1e6:.3f}M')
         # Discriminator is unconditional
         disc = UncondSADiscriminator(n_classes=self.n_classes,
-                                     model_config=self.config.model)
+                                     model_config=self.config.model).to(device)
         disc_n_params = sum(p.numel() for p in disc.parameters())
         print(f'Discriminator num parameters: {disc_n_params / 1e6:.3f}M')
 
-        g_optimizer = torch.optim.Adam(
-            filter(lambda p: p.requires_grad,
-                   gen.parameters()), lr=config.training.g_lr,
-            betas=(config.training.beta1, config.training.beta2),
-            weight_decay=config.training.weight_decay,
+        if g_optim =="adam":
+            g_optimizer = torch.optim.Adam(
+                filter(lambda p: p.requires_grad,
+                       gen.parameters()), lr=config.training.g_lr,
+                betas=(config.training.beta1, config.training.beta2),
+                weight_decay=config.training.weight_decay,
         )
-        d_optimizer = torch.optim.Adam(
-            filter(lambda p: p.requires_grad,
-                   disc.parameters()), lr=config.training.d_lr,
-            betas=(config.training.beta1, config.training.beta2),
-            weight_decay=config.training.weight_decay,
-        )
+            g_precond = None
+        
+        elif g_optim =="sgd":
+            
+            g_optimizer = torch.optim.SGD(filter(lambda p: p.requires_grad,gen.parameters()),
+                                          lr=config.training.g_lr,momentum=config.training.momentum,nesterov=True,weight_decay=config.training.weight_decay)
+            g_precond = None
+            
+        elif g_optim=="kfac":
+            g_optimizer = torch.optim.SGD(filter(lambda p: p.requires_grad,gen.parameters()),
+                                          lr=config.training.g_lr,momentum=config.training.momentum,nesterov=False,weight_decay=config.training.weight_decay)
+            g_precond = KFAC(gen,damping = config.training.g_damping, pi=config.training.pi, 
+                             T_cov=config.training.T_cov, T_inv=config.training.T_inv,
+                           alpha=0.95, constraint_norm=True,clipping=config.training.clipping)
+        
+        if d_optim == "adam":
+            d_optimizer = torch.optim.Adam(
+                filter(lambda p: p.requires_grad,
+                       disc.parameters()), lr=config.training.d_lr,
+                betas=(config.training.beta1, config.training.beta2),
+                weight_decay=config.training.weight_decay,
+            )
+            
+            d_precond = None
+        
+        elif d_optim =="sgd":
+            d_optimizer = torch.optim.SGD(filter(lambda p: p.requires_grad,disc.parameters()),
+                                          lr=config.training.d_lr,momentum=config.training.momentum,nesterov=True,weight_decay=config.training.weight_decay)
+            d_precond = None
+        
+        elif d_optim=="kfac":
+            d_optimizer = torch.optim.SGD(filter(lambda p: p.requires_grad,disc.parameters()),
+                                          lr=config.training.d_lr,momentum=config.training.momentum,nesterov=False,weight_decay=config.training.weight_decay)
+            d_precond = KFAC(disc,damping = config.training.d_damping, pi=config.training.pi, 
+                             T_cov=config.training.T_cov, T_inv=config.training.T_inv,
+                           alpha=0.95, constraint_norm=True,clipping=config.training.clipping)
+            
 
         # Eventually load pre-trained parameters
         if config.recover_model_step > 0:
-            device = idist.device()
+            device = self.device
             step = config.recover_model_step
             gen.load_state_dict(
                 torch.load(
@@ -262,12 +316,18 @@ class CondTrainerSAGAN(BaseTrainerGAN):
             print(f'Loaded trained models (step: {step}).')
 
         # Auto-distribute
-        gen = idist.auto_model(gen, sync_bn=True)
+        """gen = idist.auto_model(gen, sync_bn=True)
         disc = idist.auto_model(disc, sync_bn=True)
         g_optimizer = idist.auto_optim(g_optimizer)
         d_optimizer = idist.auto_optim(d_optimizer)
-
-        return gen, disc, g_optimizer, d_optimizer
+        
+        if g_precond is not None:
+            g_precond = idist.auto_optim(g_precond)
+        if d_precond is not None:
+            d_precond = idist.auto_optim(d_precond)
+            
+        """
+        return gen, disc, g_optimizer, d_optimizer, g_precond, d_precond
 
     def generate_data(self,
                       gen: Module) -> Tuple[torch.Tensor, List[torch.Tensor]]:
@@ -289,4 +349,4 @@ class CondTrainerSAGAN(BaseTrainerGAN):
                                                     pixel_size=pixel_size,
                                                     pixel_classes=pixel_cls,
                                                     data_size=data_size,
-                                                    device="cuda:0")
+                                                    device=self.device)

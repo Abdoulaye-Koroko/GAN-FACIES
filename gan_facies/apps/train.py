@@ -14,7 +14,7 @@ except ImportError:
 import torch
 from torch.backends import cudnn
 
-from gan_facies.data.data_loader import DatasetCond2D, DistributedDataLoader
+from gan_facies.data.data_loader import DatasetCond2D, DataLoader
 from gan_facies.gan.cond_sagan.trainer import CondTrainerSAGAN
 from gan_facies.gan.uncond_sagan.trainer import UncondTrainerSAGAN
 from gan_facies.utils.auxiliaries import set_global_seed
@@ -36,7 +36,7 @@ def train(config: ConfigType) -> None:
 
     # Model & data loader
     if architecture == 'sagan':
-        data_loader = DistributedDataLoader(dataset_path=config.dataset_path,
+        data_loader = DataLoader(dataset_path=config.dataset_path,
                                             data_size=config.model.data_size,
                                             training=True,
                                             data_config=config.data,
@@ -44,7 +44,7 @@ def train(config: ConfigType) -> None:
         # Train
         UncondTrainerSAGAN(data_loader, config).train()
     elif architecture == 'cond_sagan':
-        data_loader = DistributedDataLoader(dataset_path=config.dataset_path,
+        data_loader = DataLoader(dataset_path=config.dataset_path,
                                             data_size=config.model.data_size,
                                             training=True,
                                             data_config=config.data,

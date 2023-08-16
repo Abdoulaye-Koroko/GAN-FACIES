@@ -2,7 +2,8 @@
 run_name: cond
 config_save_path: res/configs/cond
 output_dir: res
-dataset_path: datasets/TI_analog_rongier_128_smaller.npy
+#dataset_path: datasets/TI_analog_rongier_128_smaller.npy
+dataset_path:  datasets/datasets/TI_analog_rongier_128_smaller.npy
 
 data.num_workers: 2
 model.data_size: 64
@@ -22,3 +23,4 @@ model.cond_dim_ratio: 8
 data.n_pixels_cond: 20
 data.pixel_size_cond: 1
 training.cond_penalty: 2.5
+

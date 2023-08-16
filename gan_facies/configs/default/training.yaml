@@ -29,3 +29,16 @@ model_save_step: 1200  # save generator and discriminator every n steps
 metric_step: 1200  # compute metrics every n steps
 
 cond_penalty: 10 # only used for conditional model, weight for conditional loss
+
+d_optim: kfac # sgd, adam or kfac
+g_optim: kfac #sgd, adam or kfac
+
+momentum: 0.9
+
+#for kfac preconditioner
+pi: False
+T_cov: 100
+T_inv: 100
+d_damping: 0.0001
+g_damping: 0.0001
+clipping: 1.0

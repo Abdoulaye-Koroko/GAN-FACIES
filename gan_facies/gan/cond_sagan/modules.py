@@ -79,10 +79,9 @@ class CondSAGenerator(nn.Module):
         """Return a self-attention generator block."""
         layers = []
         layers.append(
-            spec.SpectralNorm(
                 nn.ConvTranspose2d(in_channels, out_channels,
                                    kernel_size=kernel_size, stride=stride,
-                                   padding=padding)))
+                                   padding=padding))
         layers.append(nn.BatchNorm2d(out_channels))
         layers.append(nn.ReLU())
         return nn.Sequential(*layers)
