@@ -82,9 +82,8 @@ class UncondSADiscriminator(nn.Module):
         #                  stride=stride, padding=padding)))
         
         layers.append(
-            nn.utils.spectral_norm(
                 nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size,
-                         stride=stride, padding=padding)))
+                         stride=stride, padding=padding))
         
         layers.append(nn.LeakyReLU(0.1))
         module = nn.Sequential(*layers)

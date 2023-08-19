@@ -72,13 +72,7 @@ class KFAC(Optimizer):
                 
                 self._bwd_handles.append(handle)
                 
-                try:
-                
-                    params = [mod.weight_orig]
-                    
-                except:
-                    
-                    params = [mod.weight]
+                params = [mod.weight]
                 
                 if mod.bias is not None:
                     
